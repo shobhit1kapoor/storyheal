@@ -108,7 +108,17 @@
 
     <div class="arrow">👇</div>
 
-    <!-- StoryHeal Widget SDK - Using relative path for local testing -->
-    <script src="./storyheal-widget-sdk.js?api_key=ak_live_DCVbhk0gIoCNQMB1QhXb9Detux7tVZ7f" async></script>
+    <!-- StoryHeal Widget SDK - supply the public website key as ?apiKey=... -->
+    <script>
+      const publicApiKey = new URLSearchParams(window.location.search).get('apiKey');
+      if (publicApiKey) {
+        const widgetScript = document.createElement('script');
+        widgetScript.src = `./storyheal-widget-sdk.js?api_key=${encodeURIComponent(publicApiKey)}`;
+        widgetScript.async = true;
+        document.body.appendChild(widgetScript);
+      } else {
+        console.warn('Add ?apiKey=YOUR_PUBLIC_WEBSITE_KEY to load the StoryHeal widget.');
+      }
+    </script>
 </body>
 </html>
