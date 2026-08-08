@@ -228,7 +228,23 @@ def _storyblok_richtext(value: object) -> dict[str, object]:
     if isinstance(value, dict) and value.get("type") == "doc" and isinstance(value.get("content"), list):
         def clean_node(node: object) -> object:
             if isinstance(node, list):
-                return [clean_node(item) for item in node]
+                cleaned_items = [clean_node(item) for item in node]
+                return [
+                    item
+                    for item in cleaned_items
+                    if not (
+                        isinstance(item, dict)
+                        and item.get("type") == "paragraph"
+                        and isinstance(item.get("content"), list)
+                        and item["content"]
+                        and all(
+                            isinstance(child, dict)
+                            and str(child.get("text", "")).strip().lower()
+                            in {"object", "string", "doc", "paragraph", "text"}
+                            for child in item["content"]
+                        )
+                    )
+                ]
             if isinstance(node, dict):
                 cleaned = {key: clean_node(child) for key, child in node.items()}
                 if isinstance(cleaned.get("text"), str):
