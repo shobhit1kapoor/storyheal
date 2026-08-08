@@ -1,6 +1,6 @@
 """Session service for managing visitor sessions."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 from typing import Optional
 
@@ -98,6 +98,34 @@ async def close_visitor_session(
     # Queue self-healing analysis only after the closed state is durable.
     from app.models import KnowledgeEvidence, KnowledgeRun, ResponseMetric
     from app.tasks.knowledge_ops import run_knowledge_analysis
+
+    # WuKongIM can deliver the message webhook just before the assignment code
+    # creates the visitor session. Reconcile only recent, visitor-scoped orphan
+    # evidence here so a legitimate live message is never lost to the healing
+    # pipeline because of that race.
+    source_uri = f"wukongim://visitor/{session.visitor_id}"
+    created_at = session.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    orphan_evidence = db.query(KnowledgeEvidence).filter(
+        KnowledgeEvidence.project_id == session.project_id,
+        KnowledgeEvidence.session_id.is_(None),
+        KnowledgeEvidence.source_uri == source_uri,
+        KnowledgeEvidence.observed_at >= created_at - timedelta(minutes=5),
+        KnowledgeEvidence.observed_at <= datetime.now(timezone.utc) + timedelta(minutes=1),
+    ).all()
+    for orphan in orphan_evidence:
+        duplicate = db.query(KnowledgeEvidence).filter(
+            KnowledgeEvidence.project_id == session.project_id,
+            KnowledgeEvidence.session_id == session.id,
+            KnowledgeEvidence.content_hash == orphan.content_hash,
+        ).first()
+        if duplicate:
+            db.delete(orphan)
+        else:
+            orphan.session_id = session.id
+    if orphan_evidence:
+        db.flush()
 
     latest_evidence = db.query(KnowledgeEvidence).filter_by(
         project_id=session.project_id, session_id=session.id

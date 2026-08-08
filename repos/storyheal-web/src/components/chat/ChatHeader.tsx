@@ -34,6 +34,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = React.memo(({ activeChat, onEndCha
   const [isClosing, setIsClosing] = useState(false);
   const [showCloseMenu, setShowCloseMenu] = useState(false);
   const [closeHelpful, setCloseHelpful] = useState<boolean | undefined>(undefined);
+  const [closeOutcome, setCloseOutcome] = useState<'resolved' | 'unresolved' | 'handoff' | undefined>(undefined);
   const [isClearingMemory, setIsClearingMemory] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [showTransferMenu, setShowTransferMenu] = useState(false);
@@ -305,7 +306,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = React.memo(({ activeChat, onEndCha
                     ['unresolved', 'Unresolved'],
                     ['handoff', 'Handoff'],
                   ] as const).map(([value, label]) => (
-                    <button key={value} onClick={() => void handleEndChat(value)} disabled={isClosing} className="rounded-lg border border-gray-200 px-2 py-2 text-xs font-medium text-gray-700 hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                    <button key={value} onClick={() => setCloseOutcome(value)} disabled={isClosing} className={`rounded-lg border px-2 py-2 text-xs font-medium disabled:opacity-50 ${closeOutcome === value ? 'border-teal-500 bg-teal-50 text-teal-800 dark:bg-gray-700 dark:text-teal-200' : 'border-gray-200 text-gray-700 hover:border-teal-400 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700'}`}>
                       {label}
                     </button>
                   ))}
@@ -317,6 +318,13 @@ const ChatHeader: React.FC<ChatHeaderProps> = React.memo(({ activeChat, onEndCha
                     <button onClick={() => setCloseHelpful(false)} className={`rounded-md px-2 py-1 text-xs ${closeHelpful === false ? 'bg-rose-100 text-rose-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>Not helpful</button>
                   </div>
                 </div>
+                <button
+                  onClick={() => closeOutcome && void handleEndChat(closeOutcome)}
+                  disabled={isClosing || !closeOutcome}
+                  className="mt-3 w-full rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Confirm close
+                </button>
               </div>
             )}
           </div>
