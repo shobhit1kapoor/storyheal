@@ -34,6 +34,10 @@ class StoryblokConnectionUpsert(BaseModel):
     public_webhook_url: str = Field(pattern=r"^https://")
 
 
+class StoryblokDraftTokenRotate(BaseModel):
+    draft_token: SecretStr = Field(description="Replacement draft-author Management API token")
+
+
 class StoryblokConnectionView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -15,6 +15,7 @@ from app.models import Staff, StoryblokConnection, StoryblokOperation, Storyblok
 from app.schemas.knowledge_ops import (
     StoryblokConnectionUpsert,
     StoryblokConnectionView,
+    StoryblokDraftTokenRotate,
     StoryblokProvisionResult,
     StoryblokTestResult,
 )
@@ -95,6 +96,31 @@ def upsert_connection(
         entity_type="storyblok_connection",
         entity_id=str(connection.id),
         detail={"region": payload.region, "space_id": payload.space_id, "locales": connection.locales},
+    )
+    db.commit()
+    db.refresh(connection)
+    return _connection_view(connection)
+
+
+@router.patch("/connection/draft-token", response_model=StoryblokConnectionView)
+def rotate_draft_token(
+    payload: StoryblokDraftTokenRotate,
+    current_user: Staff = Depends(require_permission("storyblok:admin")),
+    db: Session = Depends(get_db),
+) -> StoryblokConnectionView:
+    """Rotate only the encrypted draft credential without exposing other secrets."""
+    connection = _get_connection(db, current_user.project_id)
+    connection.draft_token_encrypted = encrypt_str(payload.draft_token.get_secret_value())
+    connection.updated_at = datetime.now(timezone.utc)
+    audit(
+        db,
+        project_id=current_user.project_id,
+        actor_type="staff",
+        actor_id=str(current_user.id),
+        action="storyblok.draft_token.rotated",
+        entity_type="storyblok_connection",
+        entity_id=str(connection.id),
+        detail={},
     )
     db.commit()
     db.refresh(connection)
