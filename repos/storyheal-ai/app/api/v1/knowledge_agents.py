@@ -180,6 +180,10 @@ def _normalize_agent_output(
     agent_type: KnowledgeAgentType, output: dict[str, object]
 ) -> dict[str, object]:
     """Normalize common OpenAI-compatible structured-output wrappers."""
+    if agent_type == KnowledgeAgentType.GAP_DETECTION and output.get("detected") is False:
+        summary = str(output.get("summary", "")).lower()
+        if any(marker in summary for marker in ("does not address", "not addressed", "missing from", "no content")):
+            return {**output, "detected": True}
     if agent_type == KnowledgeAgentType.LOCALIZATION and "translations" not in output:
         translations = {
             key: value
