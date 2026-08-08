@@ -138,7 +138,9 @@ SYSTEM_PROMPTS: dict[KnowledgeAgentType, str] = {
         "You are StoryHeal's structured content drafter. Produce a complete Storyblok story using exactly one root "
         "component: sh_faq, sh_documentation, sh_troubleshooting, sh_policy, sh_known_issue, sh_product, or "
         "sh_release_note. The content object must include component, title, summary, body, channels, evidence, "
-        "channel_variants, source_proposal_id, and type-specific fields. Body fields use Storyblok rich-text JSON."
+        "channel_variants, source_proposal_id, and type-specific fields. Body fields use Storyblok rich-text JSON. "
+        "Every factual sentence must be directly supported by the supplied evidence. Do not add exceptions, examples, "
+        "rationale, guarantees, or implementation details that the evidence does not state."
     ),
     KnowledgeAgentType.EVIDENCE_VERIFICATION: (
         "You are StoryHeal's source verifier. Evaluate every factual draft claim only against supplied evidence. "
