@@ -160,7 +160,9 @@ SYSTEM_PROMPTS: dict[KnowledgeAgentType, str] = {
     ),
     KnowledgeAgentType.QUALITY_CHECK: (
         "You are StoryHeal's final quality gate. Score clarity, completeness, schema validity, citation coverage, "
-        "safety, localization, and duplicate risk. A score of 85 or more means publishable after human review."
+        "safety, localization, and duplicate risk. A score of 85 or more means publishable after human review. "
+        "Return only these five JSON fields: quality_score, duplicate_risk, schema_valid, citations_complete, and "
+        "issues. Never repeat the draft, evidence, input, or schema and do not include prose outside the JSON object."
     ),
 }
 
@@ -184,17 +186,20 @@ def _normalize_agent_output(
         summary = str(output.get("summary", "")).lower()
         if any(marker in summary for marker in ("does not address", "not addressed", "missing from", "no content")):
             return {**output, "detected": True}
-    if agent_type == KnowledgeAgentType.LOCALIZATION and "translations" not in output:
-        translations = {
+    if agent_type == KnowledgeAgentType.LOCALIZATION:
+        raw_translations = output.get("translations")
+        translations = dict(raw_translations) if isinstance(raw_translations, dict) else {
             key: value
             for key, value in output.items()
             if isinstance(value, dict) and len(key) in {2, 5}
         }
+        nested_untranslated = translations.pop("untranslated_fields", [])
         if translations:
             return {
-                "localization_score": 1.0,
+                **output,
+                "localization_score": float(output.get("localization_score") or 1.0),
                 "translations": translations,
-                "untranslated_fields": [],
+                "untranslated_fields": output.get("untranslated_fields", nested_untranslated),
             }
     if agent_type != KnowledgeAgentType.CONTENT_DRAFTING:
         return output
@@ -288,7 +293,13 @@ async def run_knowledge_agent(
         ],
         stream=False,
         temperature=0.1,
-        max_tokens=2400 if agent_type == KnowledgeAgentType.LOCALIZATION else 1600,
+        max_tokens=(
+            2400
+            if agent_type == KnowledgeAgentType.LOCALIZATION
+            else 600
+            if agent_type == KnowledgeAgentType.QUALITY_CHECK
+            else 1600
+        ),
         # NVIDIA NIM follows the OpenAI-compatible contract but its models do
         # not accept Ollama's `none` reasoning value. Omit the field for remote
         # providers and use it only for the local Qwen fallback.
