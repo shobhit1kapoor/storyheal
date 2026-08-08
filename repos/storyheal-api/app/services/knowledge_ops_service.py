@@ -667,7 +667,7 @@ def richtext_to_text(value: object) -> str:
             if isinstance(text, str):
                 parts.append(text)
             for key, child in node.items():
-                if key not in {"text", "attrs", "_uid", "component", "checksum", "source_proposal_id"}:
+                if key not in {"text", "type", "attrs", "_uid", "component", "checksum", "source_proposal_id"}:
                     visit(child)
 
     visit(value)
@@ -686,6 +686,9 @@ def normalize_story(story: dict[str, object], locale: str) -> dict[str, object]:
         for item in raw_channels:
             if isinstance(item, dict) and item.get("channel"):
                 channels[str(item["channel"])] = item.get("body") or item.get("answer") or ""
+    body_text = richtext_to_text(content_object.get("body"))
+    summary_text = str(content_object.get("summary") or "").strip()
+    canonical_text = "\n\n".join(part for part in (summary_text, body_text) if part).strip()
     return {
         "external_id": f"{story.get('uuid')}:{locale}",
         "source_type": "storyblok",
@@ -696,7 +699,7 @@ def normalize_story(story: dict[str, object], locale: str) -> dict[str, object]:
         "locale": locale,
         "content_type": str(content_object.get("component") or "knowledge"),
         "published_at": story.get("published_at") or story.get("first_published_at"),
-        "text": richtext_to_text(content_object),
+        "text": canonical_text or title,
         "content_hash": hashlib.sha256(
             json.dumps(content_object, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
