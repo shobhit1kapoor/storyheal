@@ -518,7 +518,10 @@ class StoryblokClient:
         webhooks = data.get("webhook_endpoints", [])
         if isinstance(webhooks, list):
             for webhook in webhooks:
-                if isinstance(webhook, dict) and webhook.get("endpoint") == url:
+                if isinstance(webhook, dict) and (
+                    webhook.get("endpoint") == url
+                    or webhook.get("name") == "StoryHeal RAG refresh"
+                ):
                     webhook_id = int(webhook["id"])
                     await self._request(
                         "PUT",
