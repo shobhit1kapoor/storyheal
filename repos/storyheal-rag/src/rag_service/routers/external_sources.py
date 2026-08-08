@@ -5,7 +5,7 @@ import secrets
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
@@ -13,7 +13,6 @@ from ..database import get_db_session_dependency
 from ..models import Collection, FileDocument, StoryblokExternalSource
 from ..schemas.external_sources import StoryblokSourceUpsert, StoryblokSourceView
 from ..services.embedding import get_embedding_service_for_project
-from ..services.vector_store import get_vector_store_service
 
 router = APIRouter()
 
@@ -22,13 +21,6 @@ def require_internal_key(x_internal_key: str = Header(..., alias="X-Internal-Key
     expected = get_settings().rag_internal_api_key
     if not expected or not secrets.compare_digest(x_internal_key, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal key")
-
-
-async def _delete_vector(document_id: UUID, project_id: UUID) -> None:
-    embedding = await get_embedding_service_for_project(project_id)
-    await get_vector_store_service().delete_document_embedding_for_project(
-        document_id, str(project_id), embedding.embeddings_client
-    )
 
 
 @router.put(
@@ -54,6 +46,10 @@ async def upsert_storyblok_source(
     if not collection:
         raise HTTPException(status_code=404, detail="RAG collection not found")
 
+    lock_key = f"{payload.project_id}:{collection_id}:{story_uuid}:{payload.locale}"
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0)))
+    )
     source = (
         await db.execute(
             select(StoryblokExternalSource).where(
@@ -69,10 +65,12 @@ async def upsert_storyblok_source(
         return view.model_copy(update={"unchanged": True})
 
     if source and source.document_id:
-        await _delete_vector(source.document_id, payload.project_id)
         old_document = await db.get(FileDocument, source.document_id)
+        source.document_id = None
+        await db.flush()
         if old_document:
             await db.delete(old_document)
+            await db.flush()
 
     document = FileDocument(
         id=uuid4(),
@@ -100,6 +98,9 @@ async def upsert_storyblok_source(
         },
     )
     db.add(document)
+    # Flush the document before assigning its UUID to the external-source
+    # foreign key. SQLAlchemy cannot infer ordering from scalar UUID fields.
+    await db.flush()
 
     if source is None:
         source = StoryblokExternalSource(
@@ -129,14 +130,23 @@ async def upsert_storyblok_source(
     source.status = "indexing"
     source.last_error = None
     await db.flush()
+    await db.execute(
+        update(FileDocument)
+        .where(FileDocument.id == document.id)
+        .values(content_tsv=func.to_tsvector("english", document.content))
+    )
 
     try:
         embedding = await get_embedding_service_for_project(payload.project_id)
-        await get_vector_store_service().add_documents_batch_for_project(
-            documents=[(document.id, document.content, document.tags)],
-            project_key=str(payload.project_id),
-            embedding_client=embedding.embeddings_client,
-        )
+        vector = await embedding.embeddings_client.aembed_query(document.content)
+        if len(vector) != embedding.get_embedding_dimensions():
+            raise ValueError(
+                f"Embedding dimension mismatch: expected "
+                f"{embedding.get_embedding_dimensions()}, got {len(vector)}"
+            )
+        document.embedding = vector
+        document.embedding_model = embedding.get_embedding_model()
+        document.embedding_dimensions = len(vector)
     except Exception as exc:
         source.status = "failed"
         source.last_error = str(exc)[:2000]
@@ -174,7 +184,6 @@ async def delete_storyblok_source(
     sources = list((await db.execute(query)).scalars().all())
     for source in sources:
         if source.document_id:
-            await _delete_vector(source.document_id, project_id)
             document = await db.get(FileDocument, source.document_id)
             if document:
                 await db.delete(document)

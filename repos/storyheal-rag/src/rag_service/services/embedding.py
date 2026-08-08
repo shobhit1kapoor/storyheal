@@ -84,10 +84,17 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
         self._compat_client = None
 
         if base_url:
+            # The OpenAI SDK resolves relative resource paths against base_url.
+            # Without a trailing slash, RFC URL joining replaces the final
+            # segment (for example, /v1 becomes /embeddings).
+            normalized_base_url = base_url.rstrip("/") + "/"
             self._compat_mode = True
-            self._compat_client = OpenAI(api_key=api_key, base_url=base_url)
+            self._compat_client = OpenAI(api_key=api_key, base_url=normalized_base_url)
             self._client = None
-            logger.info(f"Initialized OpenAI-compatible embedding client via OpenAI SDK with model: {model} at {base_url}")
+            logger.info(
+                "Initialized OpenAI-compatible embedding client via OpenAI SDK "
+                f"with model: {model} at {normalized_base_url}"
+            )
                 
         else:
             # Standard OpenAI embeddings via LangChain
@@ -109,7 +116,22 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
                 dimensions=self.dimensions,
                 encoding_format="float",
             )
-            return [item.embedding for item in response.data]
+            embeddings = [item.embedding for item in response.data]
+            normalized_embeddings: List[List[float]] = []
+            for embedding in embeddings:
+                if len(embedding) > self.dimensions:
+                    raise ValueError(
+                        f"Embedding response has {len(embedding)} dimensions, "
+                        f"which exceeds the configured {self.dimensions}"
+                    )
+                if len(embedding) < self.dimensions:
+                    # Qwen3-Embedding 0.6B returns 1024 dimensions and the
+                    # inherited phase-one pgvector schema stores 1536. Zero
+                    # padding preserves cosine similarity while keeping local
+                    # Qwen retrieval compatible with existing installations.
+                    embedding = embedding + [0.0] * (self.dimensions - len(embedding))
+                normalized_embeddings.append(embedding)
+            return normalized_embeddings
         except Exception as e:
             logger.error(f"OpenAI-compatible embeddings request failed: {str(e)}")
             raise
