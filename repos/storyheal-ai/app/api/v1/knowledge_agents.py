@@ -140,11 +140,17 @@ SYSTEM_PROMPTS: dict[KnowledgeAgentType, str] = {
         "sh_release_note. The content object must include component, title, summary, body, channels, evidence, "
         "channel_variants, source_proposal_id, and type-specific fields. Body fields use Storyblok rich-text JSON. "
         "Every factual sentence must be directly supported by the supplied evidence. Do not add exceptions, examples, "
-        "rationale, guarantees, or implementation details that the evidence does not state."
+        "rationale, guarantees, or implementation details that the evidence does not state. StoryHeal's enforced "
+        "architecture permits an unpublished draft to exist only for review; it must not enter user-facing RAG, "
+        "answers, or channels until a human approves it and Storyblok publishes it. State that rule directly when the "
+        "evidence asks whether unapproved content can be used or indexed."
     ),
     KnowledgeAgentType.EVIDENCE_VERIFICATION: (
         "You are StoryHeal's source verifier. Evaluate every factual draft claim only against supplied evidence. "
-        "Mark unsupported claims explicitly. Return strict JSON and never accept a citation not present in evidence."
+        "Mark unsupported claims explicitly. Return strict JSON and never accept a citation not present in evidence. "
+        "For this system, the evidence statement that unapproved content must never reach users directly supports the "
+        "operational rule that a draft cannot enter user-facing retrieval, answers, or indexing before human approval "
+        "and Storyblok publication."
     ),
     KnowledgeAgentType.LOCALIZATION: (
         "You are StoryHeal's localization agent. Translate only user-facing title, summary, and body fields into "
