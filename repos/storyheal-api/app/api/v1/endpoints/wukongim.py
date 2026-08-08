@@ -1,6 +1,6 @@
 """WuKongIM public endpoints."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.logging import get_logger
 from app.schemas.wukongim import WuKongIMRouteResponse
@@ -19,6 +19,7 @@ router = APIRouter()
 )
 async def get_wukongim_route(
     uid: str,
+    request: Request,
 ) -> WuKongIMRouteResponse:
     """
     Get WuKongIM WebSocket connection address for a user.
@@ -49,6 +50,23 @@ async def get_wukongim_route(
     
     try:
         result = await wukongim_client.get_route(uid=uid)
+
+        # WuKongIM reports its container-local address. Browsers running on a
+        # different origin (for example the Vercel admin/widget deployments)
+        # must instead connect through the public reverse proxy. Derive that
+        # address from trusted proxy headers without persisting a temporary
+        # tunnel hostname in application data.
+        forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+        # Cloudflare Tunnel reaches Nginx over HTTP, so Nginx's proxy header can
+        # describe the internal hop. CF-Visitor preserves the browser scheme.
+        if "https" in request.headers.get("cf-visitor", "").lower():
+            forwarded_proto = "https"
+        forwarded_host = request.headers.get("x-forwarded-host", request.headers.get("host", "")).split(",")[0].strip()
+        if forwarded_host:
+            if forwarded_proto == "https":
+                result.wss_addr = f"wss://{forwarded_host}/wss"
+            else:
+                result.ws_addr = f"ws://{forwarded_host}/wss"
         
         logger.info(f"Successfully retrieved route for uid: {uid}")
         
@@ -63,4 +81,3 @@ async def get_wukongim_route(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to retrieve route from WuKongIM service"
         )
-
