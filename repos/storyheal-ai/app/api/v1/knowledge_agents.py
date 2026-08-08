@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from enum import Enum
@@ -165,6 +166,30 @@ def _clean_json(content: str) -> dict[str, object]:
     return parsed
 
 
+def _normalize_agent_output(
+    agent_type: KnowledgeAgentType, output: dict[str, object]
+) -> dict[str, object]:
+    """Normalize common OpenAI-compatible structured-output wrappers."""
+    if agent_type != KnowledgeAgentType.CONTENT_DRAFTING:
+        return output
+    nested = output.get("content")
+    content = nested if isinstance(nested, dict) and nested.get("component") else output
+    if not isinstance(content, dict) or not content.get("component"):
+        return output
+    title = str(output.get("title") or content.get("title") or "Knowledge update")
+    slug = str(output.get("slug") or content.get("slug") or "")
+    if not slug:
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "knowledge-update"
+    return {
+        **output,
+        "content_type": str(output.get("content_type") or content.get("type") or content["component"]),
+        "title": title,
+        "slug": slug,
+        "content": content,
+        "expected_facts": output.get("expected_facts") or content.get("expected_facts") or [],
+    }
+
+
 @router.post("/{agent_type}/run", response_model=KnowledgeAgentResponse)
 async def run_knowledge_agent(
     agent_type: KnowledgeAgentType,
@@ -251,7 +276,9 @@ async def run_knowledge_agent(
     if not completion.choices or not completion.choices[0].message.content:
         raise HTTPException(status_code=502, detail="Knowledge agent returned no content")
     try:
-        raw_output = _clean_json(completion.choices[0].message.content)
+        raw_output = _normalize_agent_output(
+            agent_type, _clean_json(completion.choices[0].message.content)
+        )
         validated = TypeAdapter(OUTPUT_MODELS[agent_type]).validate_python(raw_output)
     except (json.JSONDecodeError, ValueError, ValidationError) as exc:
         raise HTTPException(status_code=502, detail=f"Invalid structured agent output: {exc}") from exc
