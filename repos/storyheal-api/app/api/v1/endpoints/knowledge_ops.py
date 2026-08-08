@@ -49,7 +49,12 @@ from app.schemas.knowledge_ops import (
     StoryblokOperationView,
 )
 from app.services.ai_client import ai_service_client
-from app.services.knowledge_ops_service import audit, credentials_for, evidence_payload
+from app.services.knowledge_ops_service import (
+    audit,
+    credentials_for,
+    evidence_payload,
+    normalize_storyblok_content,
+)
 from app.services.storyblok_client import DELIVERY_BASES, StoryblokAPIError, StoryblokClient
 from app.tasks.knowledge_ops import process_storyblok_webhook, run_knowledge_analysis
 
@@ -268,7 +273,7 @@ async def reject_proposal(
 
 
 @router.post("/proposals/{proposal_id}/retry", response_model=KnowledgeProposalView)
-def retry_proposal(
+async def retry_proposal(
     proposal_id: UUID,
     current_user: Staff = Depends(require_permission("knowledge:publish")),
     db: Session = Depends(get_db),
@@ -280,6 +285,22 @@ def retry_proposal(
         project_id=current_user.project_id, story_id=proposal.storyblok_story_id, status="failed"
     ).order_by(StoryblokWebhookReceipt.received_at.desc()).first()
     if not receipt:
+        if proposal.storyblok_story_id:
+            connection = db.query(StoryblokConnection).filter_by(project_id=current_user.project_id).first()
+            if not connection:
+                raise HTTPException(status_code=409, detail="Storyblok is not connected")
+            client = StoryblokClient(credentials_for(connection), db=db, proposal_id=proposal.id)
+            live = await client.get_management_story(proposal.storyblok_story_id)
+            live_story = live.get("story")
+            if not isinstance(live_story, dict):
+                raise HTTPException(status_code=502, detail="Storyblok draft could not be re-fetched")
+            normalized = normalize_storyblok_content(proposal.content_payload)
+            live_story["content"] = normalized
+            await client.update_draft(proposal.storyblok_story_id, live_story)
+            proposal.content_payload = normalized
+            reviewing_stage = connection.workflow_stage_ids.get("reviewing")
+            if reviewing_stage:
+                await client.move_to_stage(proposal.storyblok_story_id, reviewing_stage)
         proposal.status = ProposalStatus.REVIEWING.value
         proposal.retry_count += 1
         proposal.last_error = None

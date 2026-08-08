@@ -267,6 +267,15 @@ class StoryblokClient:
             json_body={"workflow_stage_change": {"story_id": int(story_id), "workflow_stage_id": workflow_stage_id}},
         )
 
+    async def update_draft(self, story_id: str, story: dict[str, object]) -> dict[str, object]:
+        return await self._request(
+            "PUT",
+            f"spaces/{self.credentials.space_id}/stories/{story_id}",
+            operation="story.draft.update",
+            token=self.credentials.draft_token,
+            json_body={"publish": False, "story": story},
+        )
+
     async def publish_story(self, story_id: str, story: dict[str, object]) -> dict[str, object]:
         return await self._request(
             "PUT",

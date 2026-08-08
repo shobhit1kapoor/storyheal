@@ -215,10 +215,106 @@ def apply_storyblok_translations(
         localized = translations.get(locale)
         if not isinstance(localized, dict):
             continue
+        if isinstance(localized.get("draft"), dict):
+            localized = localized["draft"]
         for key, value in localized.items():
             if key in {"component", "source_proposal_id"}:
                 continue
             result[f"{key}__i18n__{locale}"] = value
+    return result
+
+
+def _storyblok_richtext(value: object) -> dict[str, object]:
+    if isinstance(value, dict) and value.get("type") == "doc" and isinstance(value.get("content"), list):
+        return value
+    text = richtext_to_text(value).strip()
+    paragraphs = [line.strip() for line in text.splitlines() if line.strip()]
+    if not paragraphs:
+        paragraphs = ["Knowledge update"]
+    return {
+        "type": "doc",
+        "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": paragraph}]}
+            for paragraph in paragraphs
+        ],
+    }
+
+
+def normalize_storyblok_content(content: dict[str, object]) -> dict[str, object]:
+    """Coerce agent JSON into the exact component contracts provisioned in Storyblok."""
+    result = dict(content)
+    result["body"] = _storyblok_richtext(result.get("body"))
+    for key, value in list(result.items()):
+        if key.startswith("body__i18n__"):
+            result[key] = _storyblok_richtext(value)
+
+    citations: list[dict[str, object]] = []
+    raw_evidence = result.get("evidence")
+    if isinstance(raw_evidence, list):
+        for item in raw_evidence:
+            if not isinstance(item, dict):
+                continue
+            source_type = str(item.get("source_type") or "conversation")
+            if source_type not in {"conversation", "storyblok", "url"}:
+                source_type = "conversation"
+            citations.append({
+                "_uid": str(uuid4()),
+                "component": "sh_evidence",
+                "source_type": source_type,
+                "title": str(item.get("title") or "Support conversation evidence"),
+                "uri": str(item.get("uri") or item.get("source_uri") or ""),
+                "excerpt": str(item.get("excerpt") or ""),
+                "observed_at": item.get("observed_at"),
+                "checksum": str(item.get("checksum") or item.get("content_hash") or item.get("id") or ""),
+            })
+    result["evidence"] = citations
+
+    variants: list[dict[str, object]] = []
+    raw_variants = result.get("channel_variants")
+    if isinstance(raw_variants, list):
+        for item in raw_variants:
+            if not isinstance(item, dict):
+                continue
+            if item.get("component") == "sh_channel_variant" and item.get("channel"):
+                normalized = dict(item)
+                normalized["_uid"] = str(normalized.get("_uid") or uuid4())
+                normalized["answer"] = _storyblok_richtext(normalized.get("answer"))
+                variants.append(normalized)
+                continue
+            entries = (
+                [(str(item.get("channel")), item)]
+                if item.get("channel")
+                else [(str(channel), payload) for channel, payload in item.items()]
+            )
+            for channel, payload in entries:
+                if channel not in {"web", "assistant", "support", "widget"}:
+                    continue
+                payload_dict = payload if isinstance(payload, dict) else {"answer": payload}
+                variants.append({
+                    "_uid": str(uuid4()),
+                    "component": "sh_channel_variant",
+                    "channel": channel,
+                    "headline": str(payload_dict.get("headline") or payload_dict.get("title") or result.get("title") or ""),
+                    "answer": _storyblok_richtext(payload_dict.get("answer") or payload_dict.get("summary") or result.get("summary")),
+                })
+    result["channel_variants"] = variants
+
+    component = str(result.get("component") or "")
+    summary = str(result.get("summary") or result.get("title") or "Knowledge update")
+    if component == "sh_policy":
+        result["scope"] = str(result.get("scope") or summary)
+    elif component == "sh_faq":
+        result["question"] = str(result.get("question") or result.get("title") or summary)
+        result["short_answer"] = str(result.get("short_answer") or summary)
+    elif component == "sh_troubleshooting":
+        result["problem"] = str(result.get("problem") or summary)
+    elif component == "sh_known_issue":
+        result["issue_status"] = str(result.get("issue_status") or "investigating")
+        result["symptoms"] = _storyblok_richtext(result.get("symptoms") or result.get("body"))
+    elif component == "sh_release_note":
+        result["version"] = str(result.get("version") or "Unspecified")
+        result["released_at"] = result.get("released_at") or datetime.now(timezone.utc).isoformat()
+        result["changes"] = _storyblok_richtext(result.get("changes") or result.get("body"))
     return result
 
 
@@ -433,6 +529,7 @@ async def run_analysis_pipeline(db: Session, run_id: UUID) -> None:
         translations if isinstance(translations, dict) else {},
         connection.locales,
     )
+    content = normalize_storyblok_content(content)
     stage_results["localization"] = localization
 
     quality_input = {**verification_input, "draft": {**draft_output, "content": content}}
