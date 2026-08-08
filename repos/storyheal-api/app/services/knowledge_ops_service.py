@@ -226,7 +226,22 @@ def apply_storyblok_translations(
 
 def _storyblok_richtext(value: object) -> dict[str, object]:
     if isinstance(value, dict) and value.get("type") == "doc" and isinstance(value.get("content"), list):
-        return value
+        def clean_node(node: object) -> object:
+            if isinstance(node, list):
+                return [clean_node(item) for item in node]
+            if isinstance(node, dict):
+                cleaned = {key: clean_node(child) for key, child in node.items()}
+                if isinstance(cleaned.get("text"), str):
+                    cleaned["text"] = re.sub(
+                        r"^(?:(?:object|string|doc|paragraph|text)\s+)+",
+                        "",
+                        cleaned["text"],
+                        flags=re.IGNORECASE,
+                    )
+                return cleaned
+            return node
+
+        return clean_node(value)  # type: ignore[return-value]
     text = richtext_to_text(value).strip()
     paragraphs = [line.strip() for line in text.splitlines() if line.strip()]
     if not paragraphs:
