@@ -210,6 +210,10 @@ async def run_knowledge_agent(
     if not model:
         provider = await db.get(LLMProvider, provider_id)
         model = provider.default_model if provider and provider.default_model else "qwen3:8b"
+    else:
+        provider = await db.get(LLMProvider, provider_id)
+
+    is_ollama = bool(provider and provider.vendor == "ollama")
 
     response_schema = OUTPUT_MODELS[agent_type].model_json_schema()
     payload = request.model_dump(mode="json")
@@ -225,13 +229,19 @@ async def run_knowledge_agent(
             # Qwen3 defaults to an extended reasoning trace. Structured agent
             # stages need the validated JSON result, not a long hidden chain, and
             # local CPU deployments must stay within the durable worker timeout.
-            ChatMessage(role="system", content="/no_think\n" + SYSTEM_PROMPTS[agent_type]),
+            ChatMessage(
+                role="system",
+                content=("/no_think\n" if is_ollama else "") + SYSTEM_PROMPTS[agent_type],
+            ),
             ChatMessage(role="user", content=user_prompt),
         ],
         stream=False,
         temperature=0.1,
         max_tokens=1200,
-        reasoning_effort="none",
+        # NVIDIA NIM follows the OpenAI-compatible contract but its models do
+        # not accept Ollama's `none` reasoning value. Omit the field for remote
+        # providers and use it only for the local Qwen fallback.
+        reasoning_effort="none" if is_ollama else None,
         response_format=ResponseFormat(type="json_object"),
         auto_execute_tools=False,
     )
