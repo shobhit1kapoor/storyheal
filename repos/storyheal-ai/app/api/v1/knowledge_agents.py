@@ -145,8 +145,10 @@ SYSTEM_PROMPTS: dict[KnowledgeAgentType, str] = {
         "Mark unsupported claims explicitly. Return strict JSON and never accept a citation not present in evidence."
     ),
     KnowledgeAgentType.LOCALIZATION: (
-        "You are StoryHeal's localization agent. Translate user-facing fields into every requested locale, preserving "
-        "product names, version strings, code, URLs, and evidence checksums. Return translations keyed by locale."
+        "You are StoryHeal's localization agent. Translate only user-facing title, summary, and body fields into "
+        "every requested locale. Return only localization_score, translations keyed by locale, and "
+        "untranslated_fields. Do not repeat evidence, current content, metadata, or schemas. Preserve product names, "
+        "version strings, code, URLs, and evidence checksums."
     ),
     KnowledgeAgentType.QUALITY_CHECK: (
         "You are StoryHeal's final quality gate. Score clarity, completeness, schema validity, citation coverage, "
@@ -170,6 +172,18 @@ def _normalize_agent_output(
     agent_type: KnowledgeAgentType, output: dict[str, object]
 ) -> dict[str, object]:
     """Normalize common OpenAI-compatible structured-output wrappers."""
+    if agent_type == KnowledgeAgentType.LOCALIZATION and "translations" not in output:
+        translations = {
+            key: value
+            for key, value in output.items()
+            if isinstance(value, dict) and len(key) in {2, 5}
+        }
+        if translations:
+            return {
+                "localization_score": 1.0,
+                "translations": translations,
+                "untranslated_fields": [],
+            }
     if agent_type != KnowledgeAgentType.CONTENT_DRAFTING:
         return output
     nested = output.get("content")
@@ -262,7 +276,7 @@ async def run_knowledge_agent(
         ],
         stream=False,
         temperature=0.1,
-        max_tokens=1200,
+        max_tokens=2400 if agent_type == KnowledgeAgentType.LOCALIZATION else 1600,
         # NVIDIA NIM follows the OpenAI-compatible contract but its models do
         # not accept Ollama's `none` reasoning value. Omit the field for remote
         # providers and use it only for the local Qwen fallback.
