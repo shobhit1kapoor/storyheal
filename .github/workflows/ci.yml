@@ -1,0 +1,65 @@
+name: StoryHeal CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  brand-and-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject legacy branding
+        run: bash scripts/check-brand.sh
+      - name: Validate Compose
+        env:
+          POSTGRES_PASSWORD: ci-password
+          RAG_INTERNAL_API_KEY: ci-internal-key
+          INTERNAL_SERVICE_API_KEY: ci-ai-internal-key
+        run: docker compose config --quiet
+
+  backend-contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [storyheal-api, storyheal-ai, storyheal-rag]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Poetry
+        run: pip install poetry==1.8.3
+      - name: Install dependencies
+        working-directory: repos/${{ matrix.service }}
+        run: poetry install --with dev --no-root
+      - name: Compile Python contracts
+        working-directory: repos/${{ matrix.service }}
+        run: poetry run python -m compileall -q app src 2>/dev/null || poetry run python -m compileall -q app
+      - name: Test
+        working-directory: repos/${{ matrix.service }}
+        run: poetry run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [storyheal-web, storyheal-widget, storyheal-cli]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: repos/${{ matrix.service }}/package-lock.json
+      - name: Install
+        working-directory: repos/${{ matrix.service }}
+        run: |
+          npm ci --legacy-peer-deps
+          if node -e "require.resolve('rollup/package.json')" 2>/dev/null; then
+            npm install --no-save --package-lock=false --legacy-peer-deps \
+              @rollup/rollup-linux-x64-gnu@$(node -p "require('rollup/package.json').version")
+          fi
+      - name: Build
+        working-directory: repos/${{ matrix.service }}
+        run: npm run build
